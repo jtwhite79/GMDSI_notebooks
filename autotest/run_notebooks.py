@@ -81,6 +81,7 @@ SECTION_ORDER = {
     "part2_10_eva_and_dsi": [
         "1_freyberg_ensemble_dataworth.ipynb",
         "2_freyberg_ensemble_data_space_inversion.ipynb",
+        "3_freyberg_ensemble_pls_emulator.ipynb",
     ],
 }
 

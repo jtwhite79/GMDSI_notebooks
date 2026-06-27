@@ -13,6 +13,7 @@ dependencies:
   - jupyter
   - notebook
   - scipy
+  - scikit-learn
   - shapely
   - rtree
   - pyproj>=2.0
