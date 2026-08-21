@@ -40,8 +40,13 @@ CALIB_END_TIME = 4018.5
 
 
 def is_calib_time(times):
-    """True where `times` falls in the historic (calibration) period"""
-    times = pd.Series(times).astype(float)
+    """True where `times` falls in the historic (calibration) period.
+
+    Takes either a single time or a whole column of them, and returns numpy
+    booleans - so a single time gives you something you can put straight in an
+    `if`, and a column gives you a mask you can use on a dataframe.
+    """
+    times = np.asarray(times, dtype=float)
     return (times > CALIB_START_TIME) & (times <= CALIB_END_TIME)
 
 
@@ -422,7 +427,7 @@ def prep_pest(tmp_d):
             # assign the obsvals
             obs.loc[obsnme,"obsval"] = oval
             # assign a generic weight to observations in the historic period
-            if is_calib_time(time).values[0]:
+            if is_calib_time(time):
                 obs.loc[obsnme,"weight"] = HEAD_WEIGHT
     # checks
     assert org_nobs-pst.nobs==0, 'oh oh, new observations.'
@@ -449,7 +454,7 @@ def add_ppoints(tmp_d='freyberg_mf6', sfr_weight=SFR_WEIGHT):
     obs = pst.observation_data
     # the same (subjective!) streamflow weight used throughout part1, over the
     # same historic period as the head observations
-    obs.loc[(obs.obgnme=="gage-1") & (is_calib_time(obs['gage-1']).values), "weight"] = sfr_weight
+    obs.loc[(obs.obgnme=="gage-1") & is_calib_time(obs['gage-1']), "weight"] = sfr_weight
 
     sim = flopy.mf6.MFSimulation.load(sim_ws=tmp_d, verbosity_level=0) #modflow.Modflow.load(fs.MODEL_NAM,model_ws=working_dir,load_only=[])
     gwf= sim.get_model()
