@@ -1033,6 +1033,10 @@ def plot_1to1_ensemble(pst, prior=None, posterior=None, title=None):
             continue
         # ensemble files sometimes carry upper case observation names
         oe = (oe._df if hasattr(oe, "_df") else oe).rename(columns=str.lower)
+        # an empty ensemble would blow up further down in a confusing way, and
+        # it usually means something upstream threw all the realizations away -
+        # e.g. no realization was "good enough" to keep
+        assert oe.shape[0] > 0, f'the {label} ensemble has no realizations in it'
         ensembles.append((label, oe, color, size))
     assert len(ensembles) > 0, 'pass a prior and/or a posterior ensemble'
 
