@@ -954,8 +954,11 @@ def plot_1to1(pst, title=None):
     groups = sorted(res.group.unique())
     phi_comps = pst.phi_components
 
-    fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5))
-    for ax, group in zip(np.atleast_1d(axes), groups):
+    # squeeze=False so that `axes` is always an array, even with one group
+    fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5),
+                             squeeze=False)
+    axes = axes[0, :]
+    for ax, group in zip(axes, groups):
         gres = res.loc[res.group == group, :]
         ax.scatter(gres.measured, gres.modelled, marker='o', color='b', alpha=0.5)
         ax.set_title(group)
@@ -1036,9 +1039,11 @@ def plot_1to1_ensemble(pst, prior=None, posterior=None, title=None):
     obs = pst.observation_data.loc[pst.nnz_obs_names, :]
     groups = sorted(obs.obgnme.unique())
 
+    # squeeze=False so that `axes` is always an array, even with one group
     fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5),
                              squeeze=False)
-    for ax, group in zip(axes[0, :], groups):
+    axes = axes[0, :]
+    for ax, group in zip(axes, groups):
         gobs = obs.loc[obs.obgnme == group, :]
         measured = gobs.obsval.values
         weight = gobs.weight.values
