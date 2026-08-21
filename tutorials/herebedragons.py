@@ -108,9 +108,14 @@ def prep_forecasts(pst, model_times=False):
     # every forecast must have picked up its truth value. Not all of the sites
     # in pred_data.csv are carried in every control file, so `missing` is
     # expected to be non-empty - but the forecasts never are
-    fnames = pst.pestpp_options.get("forecasts", [])
+    # PEST++ accepts either name for this option, so look for both
+    fnames = pst.pestpp_options.get("forecasts",
+                                    pst.pestpp_options.get("predictions", []))
     if isinstance(fnames, str):
+        # it can also be written as one comma separated string
         fnames = fnames.split(',')
+    # observation names in a control file are lower case and carry no spaces
+    fnames = [f.strip().lower() for f in fnames]
     unset = [f for f in fnames if f not in assigned]
     assert len(unset) == 0, \
         f'these forecasts did not get a "truth" value from pred_data.csv:\n{unset}'
