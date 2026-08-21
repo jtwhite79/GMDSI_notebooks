@@ -283,18 +283,6 @@ def make_ins_from_csv(csvfile, tmp_d):
     print(f'ins file for {csvfile} prepared.')
     return
 
-def clean_pst4pestchek(pstfile, par):
-    """Hack to bypass NUMCOM/DERCOM conflict with PESTCHEK 
-        for pyemu-written control files. Could be better."""
-    with open(pstfile, 'r') as f:
-        lines = f.readlines()
-    lines = [i.replace('point         1\n', 'point\n') for i in lines ]    
-    lines = [i.replace('0.0000000000E+00      1          \n', '0.0000000000E+00      \n') if any(i.startswith(xs) for xs in par['parnme']) else i for i in lines ]
-    with open(pstfile, 'w') as f:
-        for line in lines:
-            f.write(line)
-    return
-
 def make_part_ins(tmp_d):
     # write a really simple instruction file to read the MODPATH end point file
     out_file = "freyberg_mp.mpend"
