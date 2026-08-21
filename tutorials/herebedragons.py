@@ -960,9 +960,12 @@ def plot_1to1(pst, title=None):
 
 
 def load_ies_obs_ensembles(m_d, case='freyberg'):
-    """load the prior and posterior observation ensembles written by PESTPP-IES,
-    ready for `plot_1to1_ensemble()`. The posterior is taken from the last
-    iteration that PESTPP-IES completed.
+    """load the prior and posterior observation ensembles written by PESTPP-IES.
+
+    PESTPP-IES writes one `<case>.<iteration>.obs.csv` file per iteration.
+    Iteration 0 is the prior - the ensemble before any data was assimilated -
+    and the highest numbered file is the posterior. We look at what is actually
+    on disk rather than at NOPTMAX, because PESTPP-IES can stop early.
 
     Args:
         m_d (`str`): the PESTPP-IES master directory
@@ -978,8 +981,17 @@ def load_ies_obs_ensembles(m_d, case='freyberg'):
             if i.isdigit():
                 iters.append(int(i))
     assert len(iters) > 0, f'no {case}.*.obs.csv files found in {m_d}'
+    # if only iteration 0 is there then PESTPP-IES never did an update, so there
+    # is no posterior to compare the prior against. Say so, rather than handing
+    # back the same ensemble twice and letting it look like nothing happened
+    assert max(iters) > 0, \
+        f'only found {case}.0.obs.csv in {m_d}, so there is no posterior yet. ' + \
+        'Was NOPTMAX zero or negative?'
+    print(f'prior is iteration {min(iters)}, posterior is iteration {max(iters)}')
     ensembles = [pd.read_csv(os.path.join(m_d, f'{case}.{i}.obs.csv'), index_col=0)
                  for i in [min(iters), max(iters)]]
+    # PESTPP-IES sometimes writes observation names in upper case
+    ensembles = [oe.rename(columns=str.lower) for oe in ensembles]
     return ensembles[0], ensembles[1]
 
 
