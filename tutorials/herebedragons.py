@@ -960,13 +960,45 @@ def plot_1to1(pst, title=None):
     return fig, axes
 
 
+def _ies_iterations(m_d, case, kind):
+    """the first and last iteration that PESTPP-IES wrote a `<kind>.csv` file for.
+
+    PESTPP-IES writes one `<case>.<iteration>.<kind>.csv` file per iteration.
+    Iteration 0 is the prior - before any data was assimilated - and the highest
+    numbered file is the posterior. We look at what is actually on disk rather
+    than at NOPTMAX, because PESTPP-IES can stop early.
+    """
+    iters = []
+    for f in os.listdir(m_d):
+        if f.startswith(case + '.') and f.endswith('.' + kind + '.csv'):
+            i = f.split('.')[-3]
+            if i.isdigit():
+                iters.append(int(i))
+    assert len(iters) > 0, f'no {case}.*.{kind}.csv files found in {m_d}'
+    # if only iteration 0 is there then PESTPP-IES never did an update, so there
+    # is no posterior to compare the prior against. Say so, rather than handing
+    # back the same ensemble twice and letting it look like nothing happened
+    assert max(iters) > 0, \
+        f'only found {case}.0.{kind}.csv in {m_d}, so there is no posterior yet. ' + \
+        'Was NOPTMAX zero or negative?'
+    print(f'prior is iteration {min(iters)}, posterior is iteration {max(iters)}')
+    return min(iters), max(iters)
+
+
+def _load_ies_ensembles(m_d, case, kind):
+    lo, hi = _ies_iterations(m_d, case, kind)
+    ensembles = [pd.read_csv(os.path.join(m_d, f'{case}.{i}.{kind}.csv'), index_col=0)
+                 for i in [lo, hi]]
+    # PESTPP-IES sometimes writes the names in upper case
+    ensembles = [en.rename(columns=str.lower) for en in ensembles]
+    return ensembles[0], ensembles[1]
+
+
 def load_ies_obs_ensembles(m_d, case='freyberg'):
     """load the prior and posterior observation ensembles written by PESTPP-IES.
 
-    PESTPP-IES writes one `<case>.<iteration>.obs.csv` file per iteration.
-    Iteration 0 is the prior - the ensemble before any data was assimilated -
-    and the highest numbered file is the posterior. We look at what is actually
-    on disk rather than at NOPTMAX, because PESTPP-IES can stop early.
+    The posterior is taken from the last iteration that PESTPP-IES actually
+    finished, which is not necessarily NOPTMAX - see `_ies_iterations()`.
 
     Args:
         m_d (`str`): the PESTPP-IES master directory
@@ -975,25 +1007,23 @@ def load_ies_obs_ensembles(m_d, case='freyberg'):
     Returns:
         tuple containing the prior and posterior observation ensembles
     """
-    iters = []
-    for f in os.listdir(m_d):
-        if f.startswith(case + '.') and f.endswith('.obs.csv'):
-            i = f.split('.')[-3]
-            if i.isdigit():
-                iters.append(int(i))
-    assert len(iters) > 0, f'no {case}.*.obs.csv files found in {m_d}'
-    # if only iteration 0 is there then PESTPP-IES never did an update, so there
-    # is no posterior to compare the prior against. Say so, rather than handing
-    # back the same ensemble twice and letting it look like nothing happened
-    assert max(iters) > 0, \
-        f'only found {case}.0.obs.csv in {m_d}, so there is no posterior yet. ' + \
-        'Was NOPTMAX zero or negative?'
-    print(f'prior is iteration {min(iters)}, posterior is iteration {max(iters)}')
-    ensembles = [pd.read_csv(os.path.join(m_d, f'{case}.{i}.obs.csv'), index_col=0)
-                 for i in [min(iters), max(iters)]]
-    # PESTPP-IES sometimes writes observation names in upper case
-    ensembles = [oe.rename(columns=str.lower) for oe in ensembles]
-    return ensembles[0], ensembles[1]
+    return _load_ies_ensembles(m_d, case, 'obs')
+
+
+def load_ies_par_ensembles(m_d, case='freyberg'):
+    """load the prior and posterior parameter ensembles written by PESTPP-IES.
+
+    The parameter-side twin of `load_ies_obs_ensembles()`, and it picks the
+    iterations the same way - from what is on disk, not from NOPTMAX.
+
+    Args:
+        m_d (`str`): the PESTPP-IES master directory
+        case (`str`): the control file name, without the .pst extension
+
+    Returns:
+        tuple containing the prior and posterior parameter ensembles
+    """
+    return _load_ies_ensembles(m_d, case, 'par')
 
 
 def plot_1to1_ensemble(pst, prior=None, posterior=None, title=None):
