@@ -41,8 +41,13 @@ CALIB_END_TIME = 4018.5
 
 
 def is_calib_time(times):
-    """True where `times` falls in the historic (calibration) period"""
-    times = pd.Series(times).astype(float)
+    """True where `times` falls in the historic (calibration) period.
+
+    Takes either a single time or a whole column of them, and returns numpy
+    booleans - so a single time gives you something you can put straight in an
+    `if`, and a column gives you a mask you can use on a dataframe.
+    """
+    times = np.asarray(times, dtype=float)
     return (times > CALIB_START_TIME) & (times <= CALIB_END_TIME)
 
 
@@ -104,9 +109,14 @@ def prep_forecasts(pst, model_times=False):
     # every forecast must have picked up its truth value. Not all of the sites
     # in pred_data.csv are carried in every control file, so `missing` is
     # expected to be non-empty - but the forecasts never are
-    fnames = pst.pestpp_options.get("forecasts", [])
+    # PEST++ accepts either name for this option, so look for both
+    fnames = pst.pestpp_options.get("forecasts",
+                                    pst.pestpp_options.get("predictions", []))
     if isinstance(fnames, str):
+        # it can also be written as one comma separated string
         fnames = fnames.split(',')
+    # observation names in a control file are lower case and carry no spaces
+    fnames = [f.strip().lower() for f in fnames]
     unset = [f for f in fnames if f not in assigned]
     assert len(unset) == 0, \
         f'these forecasts did not get a "truth" value from pred_data.csv:\n{unset}'
@@ -277,18 +287,6 @@ def make_ins_from_csv(csvfile, tmp_d):
     print(f'ins file for {csvfile} prepared.')
     return
 
-def clean_pst4pestchek(pstfile, par):
-    """Hack to bypass NUMCOM/DERCOM conflict with PESTCHEK 
-        for pyemu-written control files. Could be better."""
-    with open(pstfile, 'r') as f:
-        lines = f.readlines()
-    lines = [i.replace('point         1\n', 'point\n') for i in lines ]    
-    lines = [i.replace('0.0000000000E+00      1          \n', '0.0000000000E+00      \n') if any(i.startswith(xs) for xs in par['parnme']) else i for i in lines ]
-    with open(pstfile, 'w') as f:
-        for line in lines:
-            f.write(line)
-    return
-
 def make_part_ins(tmp_d):
     # write a really simple instruction file to read the MODPATH end point file
     out_file = "freyberg_mp.mpend"
@@ -426,7 +424,7 @@ def prep_pest(tmp_d):
             # assign the obsvals
             obs.loc[obsnme,"obsval"] = oval
             # assign a generic weight to observations in the historic period
-            if is_calib_time(time).values[0]:
+            if is_calib_time(time):
                 obs.loc[obsnme,"weight"] = HEAD_WEIGHT
     # checks
     assert org_nobs-pst.nobs==0, 'oh oh, new observations.'
@@ -453,7 +451,7 @@ def add_ppoints(tmp_d='freyberg_mf6', sfr_weight=SFR_WEIGHT):
     obs = pst.observation_data
     # the same (subjective!) streamflow weight used throughout part1, over the
     # same historic period as the head observations
-    obs.loc[(obs.obgnme=="gage-1") & (is_calib_time(obs['gage-1']).values), "weight"] = sfr_weight
+    obs.loc[(obs.obgnme=="gage-1") & is_calib_time(obs['gage-1']), "weight"] = sfr_weight
 
     sim = flopy.mf6.MFSimulation.load(sim_ws=tmp_d, verbosity_level=0) #modflow.Modflow.load(fs.MODEL_NAM,model_ws=working_dir,load_only=[])
     gwf= sim.get_model()
@@ -957,8 +955,11 @@ def plot_1to1(pst, title=None):
     groups = sorted(res.group.unique())
     phi_comps = pst.phi_components
 
-    fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5))
-    for ax, group in zip(np.atleast_1d(axes), groups):
+    # squeeze=False so that `axes` is always an array, even with one group
+    fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5),
+                             squeeze=False)
+    axes = axes[0, :]
+    for ax, group in zip(axes, groups):
         gres = res.loc[res.group == group, :]
         ax.scatter(gres.measured, gres.modelled, marker='o', color='b', alpha=0.5)
         ax.set_title(group)
@@ -972,10 +973,45 @@ def plot_1to1(pst, title=None):
     return fig, axes
 
 
+def _ies_iterations(m_d, case, kind):
+    """the first and last iteration that PESTPP-IES wrote a `<kind>.csv` file for.
+
+    PESTPP-IES writes one `<case>.<iteration>.<kind>.csv` file per iteration.
+    Iteration 0 is the prior - before any data was assimilated - and the highest
+    numbered file is the posterior. We look at what is actually on disk rather
+    than at NOPTMAX, because PESTPP-IES can stop early.
+    """
+    iters = []
+    for f in os.listdir(m_d):
+        if f.startswith(case + '.') and f.endswith('.' + kind + '.csv'):
+            i = f.split('.')[-3]
+            if i.isdigit():
+                iters.append(int(i))
+    assert len(iters) > 0, f'no {case}.*.{kind}.csv files found in {m_d}'
+    # if only iteration 0 is there then PESTPP-IES never did an update, so there
+    # is no posterior to compare the prior against. Say so, rather than handing
+    # back the same ensemble twice and letting it look like nothing happened
+    assert max(iters) > 0, \
+        f'only found {case}.0.{kind}.csv in {m_d}, so there is no posterior yet. ' + \
+        'Was NOPTMAX zero or negative?'
+    print(f'prior is iteration {min(iters)}, posterior is iteration {max(iters)}')
+    return min(iters), max(iters)
+
+
+def _load_ies_ensembles(m_d, case, kind):
+    lo, hi = _ies_iterations(m_d, case, kind)
+    ensembles = [pd.read_csv(os.path.join(m_d, f'{case}.{i}.{kind}.csv'), index_col=0)
+                 for i in [lo, hi]]
+    # PESTPP-IES sometimes writes the names in upper case
+    ensembles = [en.rename(columns=str.lower) for en in ensembles]
+    return ensembles[0], ensembles[1]
+
+
 def load_ies_obs_ensembles(m_d, case='freyberg'):
-    """load the prior and posterior observation ensembles written by PESTPP-IES,
-    ready for `plot_1to1_ensemble()`. The posterior is taken from the last
-    iteration that PESTPP-IES completed.
+    """load the prior and posterior observation ensembles written by PESTPP-IES.
+
+    The posterior is taken from the last iteration that PESTPP-IES actually
+    finished, which is not necessarily NOPTMAX - see `_ies_iterations()`.
 
     Args:
         m_d (`str`): the PESTPP-IES master directory
@@ -984,16 +1020,23 @@ def load_ies_obs_ensembles(m_d, case='freyberg'):
     Returns:
         tuple containing the prior and posterior observation ensembles
     """
-    iters = []
-    for f in os.listdir(m_d):
-        if f.startswith(case + '.') and f.endswith('.obs.csv'):
-            i = f.split('.')[-3]
-            if i.isdigit():
-                iters.append(int(i))
-    assert len(iters) > 0, f'no {case}.*.obs.csv files found in {m_d}'
-    ensembles = [pd.read_csv(os.path.join(m_d, f'{case}.{i}.obs.csv'), index_col=0)
-                 for i in [min(iters), max(iters)]]
-    return ensembles[0], ensembles[1]
+    return _load_ies_ensembles(m_d, case, 'obs')
+
+
+def load_ies_par_ensembles(m_d, case='freyberg'):
+    """load the prior and posterior parameter ensembles written by PESTPP-IES.
+
+    The parameter-side twin of `load_ies_obs_ensembles()`, and it picks the
+    iterations the same way - from what is on disk, not from NOPTMAX.
+
+    Args:
+        m_d (`str`): the PESTPP-IES master directory
+        case (`str`): the control file name, without the .pst extension
+
+    Returns:
+        tuple containing the prior and posterior parameter ensembles
+    """
+    return _load_ies_ensembles(m_d, case, 'par')
 
 
 def plot_1to1_ensemble(pst, prior=None, posterior=None, title=None):
@@ -1021,15 +1064,21 @@ def plot_1to1_ensemble(pst, prior=None, posterior=None, title=None):
             continue
         # ensemble files sometimes carry upper case observation names
         oe = (oe._df if hasattr(oe, "_df") else oe).rename(columns=str.lower)
+        # an empty ensemble would blow up further down in a confusing way, and
+        # it usually means something upstream threw all the realizations away -
+        # e.g. no realization was "good enough" to keep
+        assert oe.shape[0] > 0, f'the {label} ensemble has no realizations in it'
         ensembles.append((label, oe, color, size))
     assert len(ensembles) > 0, 'pass a prior and/or a posterior ensemble'
 
     obs = pst.observation_data.loc[pst.nnz_obs_names, :]
     groups = sorted(obs.obgnme.unique())
 
+    # squeeze=False so that `axes` is always an array, even with one group
     fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5),
                              squeeze=False)
-    for ax, group in zip(axes[0, :], groups):
+    axes = axes[0, :]
+    for ax, group in zip(axes, groups):
         gobs = obs.loc[obs.obgnme == group, :]
         measured = gobs.obsval.values
         weight = gobs.weight.values

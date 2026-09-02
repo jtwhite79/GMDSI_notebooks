@@ -118,11 +118,13 @@ SECTION_ORDER = {
     ],
 }
 
-# Part1 sections that must run before part1_10 (pilotpoints -> fosm dependency)
+# Part1 section run order. Order matters because later sections reuse results from
+# earlier ones: part1_10 (fosm) needs the pilotpoints runs, and part1_14 (dsi) uses
+# the prior ensemble that part1_13 (ies) leaves in its master directory.
 PART1_ORDER = [
     "part1_01", "part1_02", "part1_03", "part1_04", "part1_05",
     "part1_06", "part1_07", "part1_08", "part1_09", "part1_10",
-    "part1_11", "part1_12", "part1_13",
+    "part1_11", "part1_12", "part1_13", "part1_14",
 ]
 
 
