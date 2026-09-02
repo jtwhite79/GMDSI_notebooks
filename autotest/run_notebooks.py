@@ -23,6 +23,7 @@ Two modes:
                  skip lists exclude.
 """
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -34,9 +35,11 @@ TUTORIALS = Path(__file__).resolve().parent.parent / "tutorials"
 TIMEOUT = int(os.environ.get("NB_TIMEOUT", 1800))
 
 # Sections and individual notebooks to skip during testing.
+# NB: part2_08_opt is NOT skipped - the part2_08_sqp notebooks reuse its template
+# directories, so the opt notebooks must run first (sections run in sorted order,
+# and "part2_08_opt" sorts before "part2_08_sqp").
 SKIP_SECTIONS = {
     "part2_07_da",
-    "part2_08_opt",
     "part2_09_mou",
 }
 SKIP_NOTEBOOKS = {
@@ -50,6 +53,23 @@ SKIP_NOTEBOOKS = {
     "freyberg_ies_2_localization.ipynb",
     "freyberg_ies_3_restarting.ipynb",
 }
+
+# Response-matrix / Jacobian builders (and their dependents) are the most expensive
+# notebooks and run much slower on the macOS and Windows GitHub Actions runners, so we
+# skip them there and rely on the Ubuntu job for coverage.  freyberg_fosm_and_dataworth
+# is included because it loads the prior covariance from master_glm_1.
+SKIP_ON_MAC_WIN = {
+    "freyberg_glm_1.ipynb",
+    "freyberg_glm_2.ipynb",
+    "freyberg_glm_response_surface.ipynb",
+    "freyberg_glm_response_surface_ies.ipynb",
+    "freyberg_fosm_and_dataworth.ipynb",
+}
+# GitHub Actions sets RUNNER_OS; fall back to platform detection for local runs.
+_RUNNER_OS = os.environ.get("RUNNER_OS", "")
+IS_MAC_WIN = _RUNNER_OS in ("Windows", "macOS") or (
+    not _RUNNER_OS and platform.system() in ("Darwin", "Windows")
+)
 
 # Ordering within sections where it matters.
 # Keys are section directory prefixes; values are ordered notebook filenames.
@@ -105,7 +125,7 @@ SECTION_ORDER = {
 PART1_ORDER = [
     "part1_01", "part1_02", "part1_03", "part1_04", "part1_05",
     "part1_06", "part1_07", "part1_08", "part1_09", "part1_10",
-    "part1_11", "part1_12",
+    "part1_11", "part1_12", "part1_13",
 ]
 
 
@@ -135,6 +155,8 @@ def get_notebooks(section_dir, run_all=False):
     else:
         nbs = sorted(nb for nb in section_dir.glob("*.ipynb")
                      if nb.name not in skip)
+    if IS_MAC_WIN and not run_all:
+        nbs = [nb for nb in nbs if nb.name not in SKIP_ON_MAC_WIN]
     return nbs
 
 
@@ -172,6 +194,78 @@ def patch_ies_notebook(nb_path):
         with open(nb_path, "w", encoding="utf-8") as f:
             json.dump(nb, f, indent=1)
         print(f"  Patched IES settings in {nb_path.name}")
+    return changed
+
+
+def patch_part1_ies_notebook(nb_path):
+    """Patch the part1 basic-ies notebook to run cheaply in CI: cap ensemble size at
+    20 realizations (both the gaussian-draw `num_reals=` and `ies_num_reals`) and cap
+    positive noptmax at 2 iterations (leaving 0/1 and any negative values untouched).
+    Returns True if the notebook was changed."""
+    import json
+    import re
+    with open(nb_path, "r", encoding="utf-8") as f:
+        nb = json.load(f)
+
+    def cap_noptmax(m):
+        return m.group(1) + (m.group(2) if int(m.group(2)) <= 2 else "2")
+
+    changed = False
+    for cell in nb["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        new_source = []
+        for line in cell["source"]:
+            orig = line
+            if line.lstrip().startswith("#"):
+                new_source.append(line)
+                continue
+            # ies_num_reals = N  and  num_reals=N (gaussian draw) -> 20
+            if "ies_num_reals" in line and "=" in line:
+                line = re.sub(r'(ies_num_reals["\']?\s*[\])]?\s*=\s*)\d+',
+                              r'\g<1>20', line)
+            elif "num_reals" in line and "=" in line:
+                line = re.sub(r'(num_reals\s*=\s*)\d+', r'\g<1>20', line)
+            # positive noptmax -> capped at 2 (0/1 and negatives left alone)
+            if "noptmax" in line and "=" in line:
+                line = re.sub(r'(noptmax\s*=\s*)(\d+)', cap_noptmax, line)
+            if line != orig:
+                changed = True
+            new_source.append(line)
+        cell["source"] = new_source
+    if changed:
+        with open(nb_path, "w", encoding="utf-8") as f:
+            json.dump(nb, f, indent=1)
+        print(f"  Patched part1 IES settings in {nb_path.name}")
+    return changed
+
+
+def patch_noptmax(nb_path, value):
+    """Set positive noptmax assignments to `value` (leaving 0 and negative values,
+    e.g. -1/-2 Jacobian-only runs, untouched). Used to shorten expensive GLM runs
+    in CI. Returns True if the notebook was changed."""
+    import json
+    import re
+    with open(nb_path, "r", encoding="utf-8") as f:
+        nb = json.load(f)
+    changed = False
+    for cell in nb["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        new_source = []
+        for line in cell["source"]:
+            orig = line
+            if "noptmax" in line and "=" in line and not line.lstrip().startswith("#"):
+                line = re.sub(r'(noptmax\s*=\s*)([1-9]\d*)',
+                              r'\g<1>{0}'.format(value), line)
+            if line != orig:
+                changed = True
+            new_source.append(line)
+        cell["source"] = new_source
+    if changed:
+        with open(nb_path, "w", encoding="utf-8") as f:
+            json.dump(nb, f, indent=1)
+        print(f"  Set noptmax={value} in {nb_path.name}")
     return changed
 
 
@@ -238,9 +332,19 @@ def run_notebook(nb_path, keep_output=False):
     # overdue_giveup_fac injection is content-scoped via uses_panther().
     backup = None
     if not keep_output:
+        # every one of these shrinks the notebook for CI, so none of them may
+        # run when the point is to publish real results
         backup = nb_path.read_bytes()
         if "part2_06_ies" in str(nb_path):
             patch_ies_notebook(nb_path)
+        if "part1_13" in str(nb_path):
+            patch_part1_ies_notebook(nb_path)
+        if nb_path.name == "freyberg_glm_2.ipynb":
+            patch_noptmax(nb_path, 1)
+        if nb_path.name in ("freyberg_sqp_1.ipynb", "freyberg_sqp_2.ipynb"):
+            # pestpp-sqp runs are slow on the Windows/macOS runners; 20
+            # iterations overran the 1800s per-cell timeout, so cap at 3 for CI.
+            patch_noptmax(nb_path, 3)
         patch_overdue_giveup_fac(nb_path)
 
     env = os.environ.copy()

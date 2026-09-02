@@ -12,6 +12,38 @@ import sys
 import pyemu
 import flopy
 
+# The weight assigned to the streamflow (gage-1) observations throughout the
+# part1 tutorials. Head observations are given a weight of 1.0; flows are
+# numerically ~100 times larger than heads, so the flux observations need a
+# much smaller weight if they are not to swamp the objective function entirely.
+# This value is roughly the inverse of 10% of mean streamflow - i.e. it assumes
+# a measurement error of about 10% - and we know from our own experiments that
+# it gives a balanced objective function for this problem. It remains a
+# SUBJECTIVE choice; see the manual trial-and-error tutorial (part1_01) for a
+# demonstration of what that subjectivity costs us. Change it and re-run the
+# notebooks to see for yourself.
+SFR_WEIGHT = 0.003
+
+# The weight assigned to head observations; see the note above
+HEAD_WEIGHT = 1.0
+
+# The historic ("calibration") period. Observations at times within this window
+# are given a non-zero weight; everything outside it - in particular the
+# forecast period - is carried in the control file with zero weight. The
+# simulation starts with a steady state stress period at CALIB_START_TIME,
+# which is NOT weighted, followed by the twelve monthly stress periods of the
+# historic period. Use the same window for every observation type so that all
+# observations "see" the same period.
+CALIB_START_TIME = 3652.5
+CALIB_END_TIME = 4018.5
+
+
+def is_calib_time(times):
+    """True where `times` falls in the historic (calibration) period"""
+    times = pd.Series(times).astype(float)
+    return (times > CALIB_START_TIME) & (times <= CALIB_END_TIME)
+
+
 def prep_forecasts(pst, model_times=False):
     pred_csv = os.path.join('..', '..', 'models', 'daily_freyberg_mf6_truth',"pred_data.csv")
     assert os.path.exists(pred_csv)
@@ -38,37 +70,45 @@ def prep_forecasts(pst, model_times=False):
     obs = pst.observation_data
     obs_names = [o for o in pst.obs_names if o not in pst.nnz_obs_names]
 
-    # get list of times for obs name suffixes
-    time_str = obs_data.index.map(lambda x: f"time:{x}").values
     # empyt list to keep track of missing observation names
     missing=[]
+    # keep track of what we actually assigned, so that a forecast can never
+    # silently miss out on its "truth" value
+    assigned = set()
     for col in obs_data.columns:
-        if col.lower()=='part_time':
-            obs_sufix = col.lower()
-        else:
-        # get obs list suffix for each column of data
-            obs_sufix = col.lower()+"_"+time_str
-        if type(obs_sufix)==str:
-            obs_sufix=[obs_sufix]
+        for oval, time in zip(obs_data.loc[:,col].values, obs_data.index.values):
+            if col.lower()=='part_time':
+                # the particle travel time; a single value, matched by name
+                sufixes = ['part_time']
+                oval = pred_data.loc['part_time', 'value']
+            else:
+                # the observation naming convention differs between the two
+                # parts of these tutorials, so try both: the `PstFrom` style
+                # used in part2 first, then the simpler style used in part1
+                sufixes = [f'{col.lower()}_time:{time}', f'{col.lower()}:{time}']
+            obsnme = None
+            for sufix in sufixes:
+                hits = [ks for ks in obs_names if sufix in ks]
+                if len(hits) > 0:
+                    obsnme = hits[0]
+                    break
+            if obsnme is None:
+                missing.append(sufixes[0])
+                continue
+            # assign the obsvals
+            obs.loc[obsnme,"obsval"] = oval
+            assigned.add(obsnme)
 
-        for string, oval, time in zip(obs_sufix,obs_data.loc[:,col].values, obs_data.index.values):
-                if not any(string in obsnme for obsnme in obs_names):
-                    missing.append(string)
-                # if not, then update the pst.observation_data
-                else:
-                    # get a list of obsnames
-                    obsnme = [ks for ks in obs_names if string in ks] 
-                    if type(obsnme) == str:
-                        obsnme=[obsnme]
-                    obsnme = obsnme[0]
-                    if obsnme=='part_time':
-                        oval = pred_data.loc['part_time', 'value']
-                    # assign the obsvals
-                    obs.loc[obsnme,"obsval"] = oval
-                        ## assign a generic weight
-                        #if time > 3652.5 and time <=4018.5:
-                        #    obs.loc[obsnme,"weight"] = 1.0      
-    return 
+    # every forecast must have picked up its truth value. Not all of the sites
+    # in pred_data.csv are carried in every control file, so `missing` is
+    # expected to be non-empty - but the forecasts never are
+    fnames = pst.pestpp_options.get("forecasts", [])
+    if isinstance(fnames, str):
+        fnames = fnames.split(',')
+    unset = [f for f in fnames if f not in assigned]
+    assert len(unset) == 0, \
+        f'these forecasts did not get a "truth" value from pred_data.csv:\n{unset}'
+    return
 
 def prep_deps(template_ws, dep_dir=None):
     # dep_dir=os.path.join('..','..','dependencies')
@@ -383,9 +423,9 @@ def prep_pest(tmp_d):
             obsnme = [ks for ks in obs_names if string in ks] 
             # assign the obsvals
             obs.loc[obsnme,"obsval"] = oval
-            # assign a generic weight
-            if time > 3652.5 and time <=4018.5:
-                obs.loc[obsnme,"weight"] = 1.0
+            # assign a generic weight to observations in the historic period
+            if is_calib_time(time).values[0]:
+                obs.loc[obsnme,"weight"] = HEAD_WEIGHT
     # checks
     assert org_nobs-pst.nobs==0, 'oh oh, new observations.'
     assert len(missing)==0, f'The following obs are missing:\n{missing}'
@@ -404,12 +444,14 @@ def prep_pest(tmp_d):
 
     return pst
 
-def add_ppoints(tmp_d='freyberg_mf6'):
+def add_ppoints(tmp_d='freyberg_mf6', sfr_weight=SFR_WEIGHT):
     pst = pyemu.Pst(os.path.join(tmp_d,'freyberg.pst'))
     par = pst.parameter_data
     par.loc['rch0', 'partrans'] = 'log'
     obs = pst.observation_data
-    obs.loc[(obs.obgnme=="gage-1") & (obs['gage-1'].astype(float)<=4018.5), "weight"] = 0.005
+    # the same (subjective!) streamflow weight used throughout part1, over the
+    # same historic period as the head observations
+    obs.loc[(obs.obgnme=="gage-1") & (is_calib_time(obs['gage-1']).values), "weight"] = sfr_weight
 
     sim = flopy.mf6.MFSimulation.load(sim_ws=tmp_d, verbosity_level=0) #modflow.Modflow.load(fs.MODEL_NAM,model_ws=working_dir,load_only=[])
     gwf= sim.get_model()
@@ -867,6 +909,170 @@ def plot_ensemble_arr(pe, tmp_d, numreals):
     cb = plt.colorbar(ca, shrink=0.5)
     fig.tight_layout()
     return
+
+def _add_1to1(ax):
+    """add a 1:1 line spanning the current axis limits"""
+    lims = [np.min([ax.get_xlim(), ax.get_ylim()]),
+            np.max([ax.get_xlim(), ax.get_ylim()])]
+    ax.plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+    ax.set_xlim(lims)
+    ax.set_ylim(lims)
+    ax.set_xlabel('measured')
+    ax.set_ylabel('simulated')
+    ax.grid()
+    return
+
+
+def _weight_label(weights):
+    """only report a weight if every observation in the group shares it"""
+    weights = np.unique(np.array(weights))
+    if weights.shape[0] == 1:
+        return f'\nweight:{weights[0]}'
+    return ''
+
+
+def plot_1to1(pst, title=None):
+    """1-to-1 summary plot of measured vs simulated values, with a panel for
+    each non-zero weighted observation group. The contribution that each group
+    makes to phi - the weighted sum-of-squared residuals - is shown alongside.
+    Same style of plot as the manual trial-and-error tutorial, so that fits
+    achieved with PEST++ can be compared to fits achieved by hand.
+
+    Args:
+        pst (`pyemu.Pst`): control file with residuals (e.g. a `.rei` file) available
+        title (`str`): optional figure title
+    """
+    res = pst.res.loc[pst.nnz_obs_names, :]
+    groups = sorted(res.group.unique())
+    phi_comps = pst.phi_components
+
+    fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5))
+    for ax, group in zip(np.atleast_1d(axes), groups):
+        gres = res.loc[res.group == group, :]
+        ax.scatter(gres.measured, gres.modelled, marker='o', color='b', alpha=0.5)
+        ax.set_title(group)
+        _add_1to1(ax)
+        ax.text(x=.05, y=.95,
+                s=f'nobs:{gres.shape[0]}{_weight_label(gres.weight)}' +
+                  f'\nphi:{round(phi_comps[group],2)}',
+                transform=ax.transAxes, ha='left', va='top')
+    fig.suptitle(title if title is not None else f'total phi: {round(pst.phi, 2)}')
+    fig.tight_layout()
+    return fig, axes
+
+
+def load_ies_obs_ensembles(m_d, case='freyberg'):
+    """load the prior and posterior observation ensembles written by PESTPP-IES,
+    ready for `plot_1to1_ensemble()`. The posterior is taken from the last
+    iteration that PESTPP-IES completed.
+
+    Args:
+        m_d (`str`): the PESTPP-IES master directory
+        case (`str`): the control file name, without the .pst extension
+
+    Returns:
+        tuple containing the prior and posterior observation ensembles
+    """
+    iters = []
+    for f in os.listdir(m_d):
+        if f.startswith(case + '.') and f.endswith('.obs.csv'):
+            i = f.split('.')[-3]
+            if i.isdigit():
+                iters.append(int(i))
+    assert len(iters) > 0, f'no {case}.*.obs.csv files found in {m_d}'
+    ensembles = [pd.read_csv(os.path.join(m_d, f'{case}.{i}.obs.csv'), index_col=0)
+                 for i in [min(iters), max(iters)]]
+    return ensembles[0], ensembles[1]
+
+
+def plot_1to1_ensemble(pst, prior=None, posterior=None, title=None):
+    """stochastic 1-to-1 plot of measured vs simulated values. Unlike the
+    deterministic version, every realization in an ensemble is plotted, so that
+    the plot shows the range of fits that the ensemble spans - rather than the
+    single fit of a single "calibrated" model.
+
+    Prior and posterior are drawn on the same axes, using the same colours as
+    the rest of the tutorials: the prior in grey, the posterior in blue.
+
+    Args:
+        pst (`pyemu.Pst`): control file
+        prior: prior observation ensemble (`pyemu.ObservationEnsemble` or
+            `DataFrame`), plotted in grey. Optional
+        posterior: posterior observation ensemble, plotted in blue. Optional
+        title (`str`): optional figure title
+    """
+    ensembles = []
+    # the prior gets the larger marker so that it still shows around the
+    # posterior, which is drawn on top of it
+    for label, oe, color, size in [('prior', prior, '0.5', 45),
+                                   ('posterior', posterior, 'b', 8)]:
+        if oe is None:
+            continue
+        # ensemble files sometimes carry upper case observation names
+        oe = (oe._df if hasattr(oe, "_df") else oe).rename(columns=str.lower)
+        ensembles.append((label, oe, color, size))
+    assert len(ensembles) > 0, 'pass a prior and/or a posterior ensemble'
+
+    obs = pst.observation_data.loc[pst.nnz_obs_names, :]
+    groups = sorted(obs.obgnme.unique())
+
+    fig, axes = plt.subplots(1, len(groups), figsize=(5*len(groups), 5),
+                             squeeze=False)
+    for ax, group in zip(axes[0, :], groups):
+        gobs = obs.loc[obs.obgnme == group, :]
+        measured = gobs.obsval.values
+        weight = gobs.weight.values
+        sims = [(label, oe.loc[:, gobs.obsnme].values, color, size)
+                for label, oe, color, size in ensembles]
+
+        # A handful of wild realizations - especially in a prior ensemble - can
+        # squash the entire plot into one corner, so clip the axes to the bulk
+        # of the ensembles
+        sim_all = np.concatenate([sim for _, sim, _, _ in sims])
+        lo = min(measured.min(), np.percentile(sim_all, 5))
+        hi = max(measured.max(), np.percentile(sim_all, 95))
+        pad = 0.1 * (hi - lo)
+        lo, hi = lo - pad, hi + pad
+
+        # the fit of every realization; a fatter cloud means the ensemble spans
+        # a wider range of fits. The posterior is drawn on top of the prior
+        for zorder, (label, sim, color, size) in enumerate(sims, start=1):
+            for simulated in sim:
+                ax.scatter(measured, simulated, marker='o', color=color,
+                           alpha=min(1.0, 10.0/sim.shape[0]), s=size,
+                           zorder=zorder)
+        ax.set_title(group)
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        _add_1to1(ax)
+
+        # the median rather than the mean; a few realizations with enormous phi
+        # would otherwise dominate. Be up front about the clipping too
+        lines = [f'nobs:{gobs.shape[0]}{_weight_label(weight)}'.replace('\n', '  '),
+                 'phi (min/median/max):']
+        offscales = []
+        for label, sim, color, size in sims:
+            phis = np.sum((weight * (sim - measured))**2, axis=1)
+            lines.append(f'  {label}: {round(np.min(phis),2)} / ' +
+                         f'{round(np.median(phis),2)} / {round(np.max(phis),2)}')
+            n_off = int(((sim < lo) | (sim > hi)).any(axis=1).sum())
+            if n_off > 0:
+                offscales.append(f'{label} {n_off}/{sim.shape[0]}')
+        if len(offscales) > 0:
+            lines.append('off-scale: ' + ', '.join(offscales))
+        ax.text(x=.03, y=.97, s='\n'.join(lines), transform=ax.transAxes,
+                ha='left', va='top', fontsize=9, zorder=5,
+                bbox=dict(facecolor='w', edgecolor='none', alpha=0.75))
+        # a legend of solid markers; the scatter markers are too faint to read
+        ax.legend(handles=[plt.Line2D([], [], marker='o', linestyle='',
+                                      color=color, label=label)
+                           for label, _, color, _ in sims], loc='lower right')
+
+    if title is not None:
+        fig.suptitle(title)
+    fig.tight_layout()
+    return fig, axes
+
 
 def prep_mc(tmp_d):
     # Repeats the regul notebook

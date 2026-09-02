@@ -104,6 +104,10 @@ nb_dir = "part2_10_eva_and_dsi"
 nb_file = "2_freyberg_ensemble_data_space_inversion.ipynb"
 run_nb(nb_file, nb_dir)
 
+nb_dir = "part2_10_eva_and_dsi"
+nb_file = "3_freyberg_ensemble_pls_emulator.ipynb"
+run_nb(nb_file, nb_dir)
+
 
 
 

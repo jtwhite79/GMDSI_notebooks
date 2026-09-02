@@ -1,3 +1,12 @@
+# Conda/mamba alternative to pixi.
+#
+#     mamba env create -f environment.yml
+#     conda activate gmdsitut
+#     python scripts/get_exes.py
+#
+# pixi.toml is the other way to do the same thing, and is the recommended one
+# because it also pins the transitive dependency set (pixi.lock). Keep the two
+# in step: the versions below are the versions pinned in pixi.toml.
 name: gmdsitut
 channels:
   - conda-forge
@@ -6,22 +15,29 @@ dependencies:
   - python=3.11
   - pip
   - pandas>=2.0,<3.0
-  - numpy
+  # pyemu 1.7.0 pins numpy on linux (a blas workaround in its pyproject);
+  # match that here so the environment resolves on every platform.
+  - numpy>=2.2.6,<2.3.2
   - matplotlib
-  - openpyxl
-  - xlrd
-  - jupyter
-  - notebook
   - scipy
   - shapely
   - rtree
   - pyproj>=2.0
   - pyshp
   - psutil
-  - git
+  - pillow
+  - openpyxl
+  - xlrd
+  - jupyter
+  - jupyterlab
+  - notebook
   - nbconvert
-  - modflow-devtools
+  - nbformat
+  - ipywidgets
+  - ipython
+  - git
   - pip:
-       - -e ./dependencies/flopy
-       - -e ./dependencies/pyemu
-       - pypestutils
+      - pyemu==1.7.0
+      - flopy==3.10.0
+      - pypestutils==0.3.0
+      - modflow-devtools
