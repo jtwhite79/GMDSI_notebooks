@@ -2,11 +2,8 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
-# sys.path.insert(0,os.path.join("..", "..", "dependencies"))
 import pyemu
 import flopy
-assert "dependencies" in flopy.__file__
-assert "dependencies" in pyemu.__file__
 import matplotlib as mpl
 
 #--modify default matplotlib settings

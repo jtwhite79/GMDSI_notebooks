@@ -21,3 +21,6 @@ tutorials/**/*_respsurf/
 tutorials/**/glm_*/
 tutorials/**/freyberg6_*/
 tutorials/**/dsi_template/
+
+# pixi
+.pixi/

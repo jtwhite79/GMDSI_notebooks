@@ -22,30 +22,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: prefix-dev/setup-pixi@v0
         with:
-          environment-file: environment.yml
-          environment-name: gmdsitut
-          create-args: python=3.11
-          cache-downloads: true
-          cache-environment: true
+          cache: true
 
-      - name: Add binaries to PATH
-        shell: bash -l {0}
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          if [ "$RUNNER_OS" == "Windows" ]; then d="win"
-          elif [ "$RUNNER_OS" == "macOS" ]; then d="mac"
-          else d="linux"; fi
-          cp bin_new/$d/* "$HOME/.local/bin/"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Fetch executables
+        run: pixi run get-exes
 
       - name: Run part0 notebooks
-        shell: bash -l {0}
         env:
           MPLBACKEND: Agg
-        run: |
-          python autotest/run_notebooks.py part0
+        run: pixi run python autotest/run_notebooks.py part0
 
   # ── Part 1 notebooks (mostly independent, only fosm depends on pilotpoints) ──
   part1:
@@ -59,30 +46,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: prefix-dev/setup-pixi@v0
         with:
-          environment-file: environment.yml
-          environment-name: gmdsitut
-          create-args: python=3.11
-          cache-downloads: true
-          cache-environment: true
+          cache: true
 
-      - name: Add binaries to PATH
-        shell: bash -l {0}
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          if [ "$RUNNER_OS" == "Windows" ]; then d="win"
-          elif [ "$RUNNER_OS" == "macOS" ]; then d="mac"
-          else d="linux"; fi
-          cp bin_new/$d/* "$HOME/.local/bin/"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Fetch executables
+        run: pixi run get-exes
 
       - name: Run part1 notebooks
-        shell: bash -l {0}
         env:
           MPLBACKEND: Agg
-        run: |
-          python autotest/run_notebooks.py part1
+        run: pixi run python autotest/run_notebooks.py part1
 
   # ── Part 2 notebooks (run sequentially: setup -> mid -> final) ──
   part2:
@@ -96,27 +70,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: prefix-dev/setup-pixi@v0
         with:
-          environment-file: environment.yml
-          environment-name: gmdsitut
-          create-args: python=3.11
-          cache-downloads: true
-          cache-environment: true
+          cache: true
 
-      - name: Add binaries to PATH
-        shell: bash -l {0}
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          if [ "$RUNNER_OS" == "Windows" ]; then d="win"
-          elif [ "$RUNNER_OS" == "macOS" ]; then d="mac"
-          else d="linux"; fi
-          cp bin_new/$d/* "$HOME/.local/bin/"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Fetch executables
+        run: pixi run get-exes
 
       - name: Run part2 notebooks
-        shell: bash -l {0}
         env:
           MPLBACKEND: Agg
-        run: |
-          python autotest/run_notebooks.py part2
+        run: pixi run python autotest/run_notebooks.py part2

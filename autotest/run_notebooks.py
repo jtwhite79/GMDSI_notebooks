@@ -5,16 +5,33 @@ Usage:
     python run_notebooks.py part2_01 part2_02  # run specific sections in order
     python run_notebooks.py part1          # run all part1 notebooks
 
+    python run_notebooks.py --keep-output --all part1
+
 Notebooks within each section are sorted and run sequentially.
 Sections are run in the order given on the command line.
+
+Two modes:
+
+  CI (default)   Notebooks are patched down to a size that finishes on a
+                 runner (fewer realizations, noptmax=3), executed, then
+                 RESTORED and their output cleared. Nothing is left behind.
+
+  --keep-output  No patching, no restore, no clearing: notebooks are executed
+                 at their real settings and the results stay in the file.
+                 This is what you want when publishing the rendered notebooks.
+                 Add --all to also run the sections and notebooks that the CI
+                 skip lists exclude.
 """
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 TUTORIALS = Path(__file__).resolve().parent.parent / "tutorials"
-TIMEOUT = 1800  # 30 minutes per notebook
+# Seconds per notebook. The heavier part2 sections (MOU under uncertainty in
+# particular) can exceed 30 minutes on a laptop; override with NB_TIMEOUT.
+TIMEOUT = int(os.environ.get("NB_TIMEOUT", 1800))
 
 # Sections and individual notebooks to skip during testing.
 SKIP_SECTIONS = {
@@ -92,29 +109,32 @@ PART1_ORDER = [
 ]
 
 
-def get_sections(prefix):
+def get_sections(prefix, run_all=False):
     """Find tutorial section directories matching a prefix."""
+    skip = set() if run_all else SKIP_SECTIONS
     sections = sorted(
         d for d in TUTORIALS.iterdir()
         if d.is_dir() and d.name.startswith(prefix)
-        and d.name not in SKIP_SECTIONS
+        and d.name not in skip
     )
     return sections
 
 
-def get_notebooks(section_dir):
+def get_notebooks(section_dir, run_all=False):
     """Get ordered list of notebooks for a section directory."""
     dirname = section_dir.name
+    skip = set() if run_all else SKIP_NOTEBOOKS
     if dirname in SECTION_ORDER:
-        nbs = [
-            section_dir / nb for nb in SECTION_ORDER[dirname]
-            if (section_dir / nb).exists() and nb not in SKIP_NOTEBOOKS
-        ]
+        ordered = [nb for nb in SECTION_ORDER[dirname] if nb not in skip]
+        nbs = [section_dir / nb for nb in ordered if (section_dir / nb).exists()]
+        if run_all:
+            # anything in the directory the explicit order does not mention
+            named = set(ordered)
+            nbs += sorted(nb for nb in section_dir.glob("*.ipynb")
+                          if nb.name not in named)
     else:
-        nbs = sorted(
-            nb for nb in section_dir.glob("*.ipynb")
-            if nb.name not in SKIP_NOTEBOOKS
-        )
+        nbs = sorted(nb for nb in section_dir.glob("*.ipynb")
+                     if nb.name not in skip)
     return nbs
 
 
@@ -201,8 +221,13 @@ def patch_overdue_giveup_fac(nb_path):
     return changed
 
 
-def run_notebook(nb_path):
-    """Execute a notebook in place and clear output. Returns True on success."""
+def run_notebook(nb_path, keep_output=False):
+    """Execute a notebook in place. Returns True on success.
+
+    With keep_output the notebook is run at its real settings and the results
+    are left in the file; otherwise it is patched for CI, then restored and
+    cleared.
+    """
     print(f"\n{'='*60}")
     print(f"Running: {nb_path.relative_to(TUTORIALS.parent)}")
     print(f"{'='*60}")
@@ -211,10 +236,21 @@ def run_notebook(nb_path):
     # Patch notebooks for testing, keeping a backup to restore after.
     # IES-specific (reduced realizations/iterations) is path-scoped; the panther
     # overdue_giveup_fac injection is content-scoped via uses_panther().
-    backup = nb_path.read_bytes()
-    if "part2_06_ies" in str(nb_path):
-        patch_ies_notebook(nb_path)
-    patch_overdue_giveup_fac(nb_path)
+    backup = None
+    if not keep_output:
+        backup = nb_path.read_bytes()
+        if "part2_06_ies" in str(nb_path):
+            patch_ies_notebook(nb_path)
+        patch_overdue_giveup_fac(nb_path)
+
+    env = os.environ.copy()
+    if keep_output:
+        # MPLBACKEND=Agg (set for CI, where output is thrown away anyway)
+        # overrides ipykernel's inline backend, and every matplotlib figure is
+        # then silently discarded instead of being embedded in the notebook.
+        # These are plot-heavy teaching notebooks, so in keep-output mode the
+        # figures ARE the result - never let that variable through.
+        env.pop("MPLBACKEND", None)
 
     result = subprocess.run(
         [
@@ -226,27 +262,29 @@ def run_notebook(nb_path):
         ],
         cwd=str(nb_path.parent),
         capture_output=False,
+        env=env,
     )
 
     elapsed = time.time() - t0
     status = "PASS" if result.returncode == 0 else "FAIL"
     print(f"{status}: {nb_path.name} ({elapsed:.0f}s)")
 
-    # Restore original notebook content (reverts any patching above)
-    nb_path.write_bytes(backup)
+    if not keep_output:
+        # Restore original notebook content (reverts any patching above)
+        nb_path.write_bytes(backup)
 
-    # Clear output and metadata regardless of success
-    subprocess.run(
-        [
-            sys.executable, "-m", "jupyter", "nbconvert",
-            "--ClearOutputPreprocessor.enabled=True",
-            "--ClearMetadataPreprocessor.enabled=True",
-            "--inplace",
-            str(nb_path),
-        ],
-        cwd=str(nb_path.parent),
-        capture_output=True,
-    )
+        # Clear output and metadata regardless of success
+        subprocess.run(
+            [
+                sys.executable, "-m", "jupyter", "nbconvert",
+                "--ClearOutputPreprocessor.enabled=True",
+                "--ClearMetadataPreprocessor.enabled=True",
+                "--inplace",
+                str(nb_path),
+            ],
+            cwd=str(nb_path.parent),
+            capture_output=True,
+        )
 
     return result.returncode == 0
 
@@ -258,7 +296,17 @@ def main():
         print("  e.g.: python run_notebooks.py part2_01 part2_02")
         sys.exit(1)
 
-    prefixes = sys.argv[1:]
+    args = sys.argv[1:]
+    keep_output = "--keep-output" in args
+    run_all = "--all" in args
+    prefixes = [a for a in args if not a.startswith("--")]
+    if not prefixes:
+        print("Usage: python run_notebooks.py [--keep-output] [--all] <prefix> ...")
+        sys.exit(1)
+    if keep_output:
+        print("keep-output mode: real settings, results stay in the notebooks")
+    if run_all:
+        print("run-all mode: CI skip lists ignored")
     failures = []
     total = 0
 
@@ -267,19 +315,19 @@ def main():
         if prefix == "part1":
             all_sections = []
             for p in PART1_ORDER:
-                all_sections.extend(get_sections(p))
+                all_sections.extend(get_sections(p, run_all))
         else:
-            all_sections = get_sections(prefix)
+            all_sections = get_sections(prefix, run_all)
 
         if not all_sections:
             print(f"WARNING: no sections found matching '{prefix}'")
             continue
 
         for section in all_sections:
-            notebooks = get_notebooks(section)
+            notebooks = get_notebooks(section, run_all)
             for nb in notebooks:
                 total += 1
-                if not run_notebook(nb):
+                if not run_notebook(nb, keep_output=keep_output):
                     failures.append(str(nb.relative_to(TUTORIALS.parent)))
 
     print(f"\n{'='*60}")

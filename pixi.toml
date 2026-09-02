@@ -1,0 +1,56 @@
+[workspace]
+name = "gmdsi-notebooks"
+version = "0.1.0"
+channels = ["conda-forge"]
+requires-pixi = ">=0.71"
+# The platform versions matter: pypestutils ships prebuilt wheels tagged
+# macosx_14_0_arm64 / manylinux_2_17. Without these minimums pixi falls back to
+# the sdist, which carries no compiled pestutils library, and the geostatistics
+# notebooks fail at import with "Could not load pestutils library".
+platforms = [
+    "win-64",
+    { platform = "linux-64", linux = "4.4.0" },
+    { platform = "linux-aarch64", linux = "4.4.0" },
+    { platform = "osx-arm64", macos = "14.0" },
+    "osx-64",
+]
+
+[dependencies]
+python = "3.11.*"
+pandas = ">=2.0,<3.0"
+# pyemu 1.7.0 pins numpy on linux (a blas workaround in its pyproject); match
+# that here so one lockfile resolves on every platform.
+numpy = ">=2.2.6,<2.3.2"
+matplotlib = "*"
+scipy = "*"
+shapely = "*"
+rtree = "*"
+pyproj = ">=2.0"
+pyshp = "*"
+psutil = "*"
+pillow = "*"
+openpyxl = "*"
+xlrd = "*"
+jupyter = "*"
+jupyterlab = "*"
+notebook = "*"
+nbconvert = "*"
+nbformat = "*"
+ipywidgets = "*"
+ipython = "*"
+git = "*"
+
+[pypi-dependencies]
+# The two packages this course is actually about, pinned to released versions
+# so a student and CI resolve the same thing.
+pyemu = "==1.7.0"
+flopy = "==3.10.0"
+pypestutils = "==0.3.0"
+modflow-devtools = "*"
+
+[tasks]
+install = { depends-on = ["get-exes"] }
+get-exes = "python scripts/get_exes.py"
+check-exes = "python scripts/get_exes.py --check"
+jupyter = "jupyter lab"
+test-notebooks = "python autotest/run_notebooks.py"

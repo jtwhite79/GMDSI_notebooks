@@ -4,11 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import sys
-# sys.path.insert(0,os.path.join("..", "..", "dependencies"))
 import pyemu
 import flopy
-assert "dependencies" in flopy.__file__
-assert "dependencies" in pyemu.__file__
 sys.path.insert(0,"..")
 import herebedragons as hbd
 import flopy.plot.styles as wtf
