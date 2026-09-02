@@ -1,5 +1,7 @@
 import nbformat
 from nbconvert.preprocessors import ExecutePreprocessor
+import contextlib
+import io
 import os
 import shutil
 import platform
@@ -876,6 +878,8 @@ def plot_ensemble_arr(pe, tmp_d, numreals):
             os.path.join(tmp_d, "freyberg6.nam"),
             delr=gwf.dis.delr.array, delc=gwf.dis.delc.array)
 
+    grid_shape = (gwf.dis.nrow.data, gwf.dis.ncol.data)
+
     pp_file=os.path.join(tmp_d,"hkpp.dat")
     df_pp = pyemu.pp_utils.pp_tpl_to_dataframe(os.path.join(tmp_d,"hkpp.dat.tpl"))
     #same name order
@@ -890,8 +894,15 @@ def plot_ensemble_arr(pe, tmp_d, numreals):
         # save a pilot points file
 
         pyemu.pp_utils.write_pp_file(pp_file, df_pp)
-        # interpolate the pilot point values to the grid
-        ident_arr = pyemu.geostats.fac2real(pp_file, factors_file=pp_file+".fac",out_file=None, )
+        # interpolate the pilot point values to the grid.
+        # passing 'shape' lets fac2real use the faster pypestutils routine
+        # instead of falling back to the pyemu implementation. It still prints
+        # a timing line on either path, and both messages are bare print()s
+        # rather than warnings, so stdout is captured to keep the plot output
+        # clean; nothing else in the call writes to stdout.
+        with contextlib.redirect_stdout(io.StringIO()):
+            ident_arr = pyemu.geostats.fac2real(pp_file, factors_file=pp_file+".fac",
+                                                out_file=None, shape=grid_shape)
 
 
         ax = fig.add_subplot(int(numreals/5)+1, 5, real+1, aspect='equal')

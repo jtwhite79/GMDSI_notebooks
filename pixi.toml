@@ -23,6 +23,9 @@ pandas = ">=2.0,<3.0"
 numpy = ">=2.2.6,<2.3.2"
 matplotlib = "*"
 scipy = "*"
+# scikit-learn: part0_intro_to_pls checks its from-scratch NIPALS against
+# sklearn.cross_decomposition.PLSRegression, which pyemu.emulators.PLS also wraps.
+scikit-learn = "*"
 shapely = "*"
 rtree = "*"
 pyproj = ">=2.0"

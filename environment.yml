@@ -20,6 +20,8 @@ dependencies:
   - numpy>=2.2.6,<2.3.2
   - matplotlib
   - scipy
+  # part0_intro_to_pls checks its from-scratch NIPALS against sklearn
+  - scikit-learn
   - shapely
   - rtree
   - pyproj>=2.0

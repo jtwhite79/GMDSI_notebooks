@@ -35,9 +35,6 @@ TUTORIALS = Path(__file__).resolve().parent.parent / "tutorials"
 TIMEOUT = int(os.environ.get("NB_TIMEOUT", 1800))
 
 # Sections and individual notebooks to skip during testing.
-# NB: part2_08_opt is NOT skipped - the part2_08_sqp notebooks reuse its template
-# directories, so the opt notebooks must run first (sections run in sorted order,
-# and "part2_08_opt" sorts before "part2_08_sqp").
 SKIP_SECTIONS = {
     "part2_07_da",
     "part2_09_mou",
@@ -341,10 +338,6 @@ def run_notebook(nb_path, keep_output=False):
             patch_part1_ies_notebook(nb_path)
         if nb_path.name == "freyberg_glm_2.ipynb":
             patch_noptmax(nb_path, 1)
-        if nb_path.name in ("freyberg_sqp_1.ipynb", "freyberg_sqp_2.ipynb"):
-            # pestpp-sqp runs are slow on the Windows/macOS runners; 20
-            # iterations overran the 1800s per-cell timeout, so cap at 3 for CI.
-            patch_noptmax(nb_path, 3)
         patch_overdue_giveup_fac(nb_path)
 
     env = os.environ.copy()
