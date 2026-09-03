@@ -81,3 +81,66 @@ jobs:
         env:
           MPLBACKEND: Agg
         run: pixi run python autotest/run_notebooks.py part2
+
+  # ── The conda/mamba path (environment.yml), which the pixi jobs never touch ──
+  #
+  # environment.yml and pixi.toml are two hand-maintained dependency lists that
+  # have to stay in step, and the two `get-*` commands in the yml header have to
+  # stay in step with pixi.toml's get-exes task. Without this job, drift in
+  # either is invisible until a student hits it.
+  #
+  # Only part0 is run: it is enough to catch dependency drift and to prove the
+  # executables resolve, without paying for the full suite a second time.
+  conda:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    name: conda-part0-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        # required for conda activation to persist between steps
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: gmdsitut
+          miniforge-version: latest
+          use-mamba: true
+
+      - name: Fetch executables
+        # the same pins as pixi.toml's get-exes task
+        run: |
+          get-modflow --release-id 29.0 --subset mf6,mp7 :python
+          get-pestpp --release-id 5.2.27 :python
+
+      - name: Check executables resolve inside the environment
+        # A binary found OUTSIDE the env means something earlier on PATH is
+        # shadowing it - and herebedragons.prep_bins copies whatever `which`
+        # finds into every worker directory, so the notebooks would silently
+        # run the wrong version rather than fail.
+        run: |
+          python - <<'PY'
+          import os, shutil, sys
+          exes = ["mf6", "mp7", "pestpp-glm", "pestpp-ies", "pestpp-sen",
+                  "pestpp-opt", "pestpp-da", "pestpp-mou", "pestpp-swp"]
+          prefix = os.path.realpath(sys.prefix)
+          bad = []
+          for name in exes:
+              found = shutil.which(name)
+              print(f"{name:<12}{found}")
+              if found is None or not os.path.realpath(found).startswith(prefix):
+                  bad.append((name, found))
+          if bad:
+              sys.exit("not resolved inside the environment: {}".format(bad))
+          PY
+
+      - name: Run part0 notebooks
+        env:
+          MPLBACKEND: Agg
+        run: python autotest/run_notebooks.py part0
