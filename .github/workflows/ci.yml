@@ -27,6 +27,12 @@ jobs:
           cache: true
 
       - name: Fetch executables
+        # GITHUB_TOKEN: get-modflow and get-pestpp query the GitHub releases
+        # API, which is rate limited to ~60 requests/hour per IP for anonymous
+        # callers. Runners share IPs, so without a token these intermittently
+        # fail with "HTTP Error 403: rate limit exceeded".
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pixi run get-exes
 
       - name: Run part0 notebooks
@@ -51,6 +57,12 @@ jobs:
           cache: true
 
       - name: Fetch executables
+        # GITHUB_TOKEN: get-modflow and get-pestpp query the GitHub releases
+        # API, which is rate limited to ~60 requests/hour per IP for anonymous
+        # callers. Runners share IPs, so without a token these intermittently
+        # fail with "HTTP Error 403: rate limit exceeded".
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pixi run get-exes
 
       - name: Run part1 notebooks
@@ -75,6 +87,12 @@ jobs:
           cache: true
 
       - name: Fetch executables
+        # GITHUB_TOKEN: get-modflow and get-pestpp query the GitHub releases
+        # API, which is rate limited to ~60 requests/hour per IP for anonymous
+        # callers. Runners share IPs, so without a token these intermittently
+        # fail with "HTTP Error 403: rate limit exceeded".
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pixi run get-exes
 
       - name: Run part2 notebooks
@@ -115,6 +133,8 @@ jobs:
 
       - name: Fetch executables
         # the same pins as pixi.toml's get-exes task
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           get-modflow --release-id 29.0 --subset mf6,mp7 :python
           get-pestpp --release-id 5.2.27 :python
