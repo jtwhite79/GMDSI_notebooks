@@ -53,7 +53,23 @@ modflow-devtools = "*"
 
 [tasks]
 install = { depends-on = ["get-exes"] }
-get-exes = "python scripts/get_exes.py"
-check-exes = "python scripts/get_exes.py --check"
+# Install the executables into this environment's own bin (":python"). These
+# are the statically linked USGS release builds: herebedragons.prep_bins copies
+# them into every template and worker directory, which conda-packaged binaries
+# cannot survive (they resolve their libs through @rpath back into the env).
+#
+# Both releases are pinned so a student running this in six months gets the same
+# binaries we tested against. MODFLOW-ORG/executables 29.0 is MODFLOW 6.7.0 and
+# MODPATH 7.2.001.
+#
+# The PEST++ pin is not merely for reproducibility: every usgs/pestpp release
+# since 5.2.16 is flagged a GitHub "prerelease", and the /releases/latest
+# endpoint skips prereleases - so "latest" would quietly install 5.2.16 from
+# December 2024 rather than the newest build.
+get-exes = """
+get-modflow --release-id 29.0 --subset mf6,mp7 :python &&
+get-pestpp --release-id 5.2.27 :python
+"""
+check-exes = "python -c \"import shutil;[print(f'{n:<12}{shutil.which(n)}') for n in ['mf6','mp7','pestpp-glm','pestpp-ies','pestpp-sen','pestpp-opt','pestpp-da','pestpp-mou','pestpp-swp']]\""
 jupyter = "jupyter lab"
 test-notebooks = "python autotest/run_notebooks.py"

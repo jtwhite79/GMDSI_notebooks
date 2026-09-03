@@ -133,22 +133,54 @@ def prep_deps(template_ws, dep_dir=None):
     return
 
 
-# Executables live in a single ./bin at the repo root, populated by
-# `pixi run get-exes`. They are no longer vendored per-OS in the repo.
-bin_path = os.path.join("..", "..", "bin")
-
+# The executables the tutorials actually invoke. Named explicitly rather than
+# discovered by listing a directory: prep_bins() used to copy everything it
+# found next to the vendored binaries, which was fine when that directory held
+# nothing else, but silently copies the whole of python/jupyter/curl into every
+# worker directory the moment the source is an environment's bin.
+EXE_NAMES = [
+    "mf6",   # MODFLOW 6
+    "mp7",   # MODPATH 7
+    "pestpp-glm",
+    "pestpp-ies",
+    "pestpp-sen",
+    "pestpp-opt",
+    "pestpp-da",
+    "pestpp-mou",
+    "pestpp-swp",
+]
 
 def prep_bins(dest_path):
-    if not os.path.isdir(bin_path):
+    """Copy the tutorial executables from the active environment into `dest_path`.
+
+    They have to be physically present: the forward-run scripts call './mf6'
+    and './mp7', and pyemu.os_utils.start_workers replicates this directory for
+    every parallel agent, so relying on PATH is not enough.
+
+    shutil.which resolves them out of whichever environment is active, and
+    handles the platform differences - the '.exe' suffix on Windows, and the
+    several places an environment can put a native binary.
+    """
+    missing = []
+    for name in EXE_NAMES:
+        src = shutil.which(name)
+        if src is None:
+            missing.append(name)
+            continue
+        dest = os.path.join(dest_path, os.path.basename(src))
+        if os.path.exists(dest):
+            os.remove(dest)
+        shutil.copy2(src, dest)
+
+    if missing:
         raise FileNotFoundError(
-            f"no executables found at {os.path.abspath(bin_path)} - "
-            "run 'pixi run get-exes' from the repo root first"
+            "not on PATH: {}\n"
+            "install them into the active environment with:\n"
+            "    pixi run get-exes\n"
+            "or, in a conda environment:\n"
+            "    get-modflow --subset mf6,mp7 :python\n"
+            "    get-pestpp --release-id 5.2.27 :python".format(", ".join(missing))
         )
-    files = os.listdir(bin_path)
-    for f in files:
-        if os.path.exists(os.path.join(dest_path, f)):
-            os.remove(os.path.join(dest_path, f))
-        shutil.copy2(os.path.join(bin_path, f), os.path.join(dest_path, f))
 
 def run_notebook(notebook_filename, path):
     notebook_filename = os.path.join(path,notebook_filename)
@@ -344,14 +376,39 @@ def prep_pest(tmp_d):
     make_part_ins(tmp_d)
 
     # build lists of tpl, in, ins, and out files
-    tpl_files = [os.path.join(tmp_d, f) for f in os.listdir(tmp_d) if f.endswith(".tpl")]
+    # sorted(): os.listdir returns filesystem order, which is not stable between
+    # machines or even between runs. These lists fix the parameter and observation
+    # order in the control file, and that order decides which random number the
+    # (seeded) prior draw hands to which parameter - so an unsorted listdir makes
+    # the prior ensemble irreproducible.
+    tpl_files = [os.path.join(tmp_d, f) for f in sorted(os.listdir(tmp_d)) if f.endswith(".tpl")]
     in_files = [f.replace(".tpl","") for f in tpl_files]
-    ins_files = [os.path.join(tmp_d, f) for f in os.listdir(tmp_d) if f.endswith(".ins")]
+    ins_files = [os.path.join(tmp_d, f) for f in sorted(os.listdir(tmp_d)) if f.endswith(".ins")]
     out_files = [f.replace(".ins","") for f in ins_files]
 
     # build a control file
     pst = pyemu.Pst.from_io_files(tpl_files,in_files,
                                             ins_files,out_files, pst_path='.')
+
+    # Sort the parameter and observation sections into a stable order.
+    #
+    # pyemu.utils.helpers.pst_from_io_files collects names into a `set` (it has
+    # to - wel0..wel5 appear in every wel template file, so the names need
+    # deduplicating) and then does `list(par_names)`. Iterating a set of strings
+    # gives an order that PYTHONHASHSEED randomises per process, so the control
+    # file comes out in a different parameter order on every run.
+    #
+    # That is not cosmetic: ParameterEnsemble.from_gaussian_draw is seeded, so
+    # it produces the same stream of random numbers every time, but consumes
+    # that stream in parameter order. Shuffle the parameters and the same
+    # numbers land on different parameters - a different prior ensemble, hence
+    # different realisations failing, from one run to the next.
+    #
+    # Sorting here makes the whole chain reproducible. Remove it once pyemu
+    # sorts (or preserves insertion order) in pst_from_io_files.
+    pst.parameter_data = pst.parameter_data.sort_index()
+    pst.observation_data = pst.observation_data.sort_index()
+
     pst.try_parse_name_metadata()
     #tidy up
     par=pst.parameter_data
@@ -469,9 +526,15 @@ def add_ppoints(tmp_d='freyberg_mf6', sfr_weight=SFR_WEIGHT):
     par = pst.parameter_data
     par.loc['strinf', ['parval1', 'parlbnd', 'parubnd', 'pargp']] = 500, 50, 5000, 'strinf'
     ###--add  WEL params
-    wel_spd_files = [f for f in os.listdir(tmp_d) if '.wel_stress_period_data_' in f
-                        and int(f.split('.')[-2].split('_')[-1]) < 13
-                        and f.endswith('txt')]
+    # sorted by stress period number, not by name: os.listdir is unordered, and
+    # the slice below picks a subset of these files, so an unstable order changes
+    # WHICH stress periods get parameters and which wel{i} name each one gets.
+    wel_spd_files = sorted(
+        (f for f in os.listdir(tmp_d) if '.wel_stress_period_data_' in f
+            and int(f.split('.')[-2].split('_')[-1]) < 13
+            and f.endswith('txt')),
+        key=lambda f: int(f.split('.')[-2].split('_')[-1]),
+    )
     for filename in wel_spd_files[1:12]:
         with open(os.path.join(tmp_d, filename+'.tpl'), 'w+')as f:
             f.write("ptf ~\n")
@@ -527,7 +590,7 @@ def add_ppoints(tmp_d='freyberg_mf6', sfr_weight=SFR_WEIGHT):
     #pst.drop_parameters(tpl_file=os.path.join(tmp_d,'freyberg6.rch.tpl'), pst_path='.', )
     par_pp = pst.add_parameters(os.path.join(tmp_d,'rchpp.dat.tpl'), pst_path='.' )
     pst.parameter_data.loc[par_pp.parnme, ['parval1','parlbnd','parubnd', 'pargp']] = rch_parval, rchub, rchlb, 'rchpp'
-    rchspd_files = [i for i in os.listdir(tmp_d) if '.rch_recharge' in i]
+    rchspd_files = sorted(i for i in os.listdir(tmp_d) if '.rch_recharge' in i)
     if not os.path.exists(os.path.join(tmp_d, 'org_f')):
         os.mkdir(os.path.join(tmp_d, 'org_f'))
     for f in rchspd_files:
@@ -555,6 +618,13 @@ def add_ppoints(tmp_d='freyberg_mf6', sfr_weight=SFR_WEIGHT):
     pst.model_command = ['python forward_run.py']
 
     pst.control_data.pestmode = "estimation"
+
+    # Sort again before writing: pst.add_parameters() works out which names are
+    # new by set difference against the existing ones, so each call appends its
+    # parameters in a PYTHONHASHSEED-dependent order - undoing the sort done in
+    # prep_pest. See the note there for why the order has to be stable.
+    pst.parameter_data = pst.parameter_data.sort_index()
+    pst.observation_data = pst.observation_data.sort_index()
 
     pst.write(os.path.join(tmp_d, 'freyberg_pp.pst'))
     return print("new control file: 'freyberg_pp.pst'")

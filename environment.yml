@@ -2,7 +2,25 @@
 #
 #     mamba env create -f environment.yml
 #     conda activate gmdsitut
-#     python scripts/get_exes.py
+#     get-modflow --release-id 29.0 --subset mf6,mp7 :python
+#     get-pestpp --release-id 5.2.27 :python
+#
+# The two get-* commands are the same ones `pixi run get-exes` runs, with the
+# same pins. ":python" installs into this environment's own bin, so the
+# environment owns its binaries rather than sharing a directory in the repo.
+#
+# The pinned releases:
+#   MODFLOW-ORG/executables 29.0 - MODFLOW 6.7.0 and MODPATH 7.2.001
+#   usgs/pestpp 5.2.27           - the PEST++ suite
+#
+# Pin PEST++ explicitly rather than taking "latest": every usgs/pestpp release
+# since 5.2.16 is flagged a GitHub "prerelease", and the /releases/latest
+# endpoint skips prereleases, so "latest" installs 5.2.16 (December 2024).
+#
+# To check what an activated environment will actually run:
+#     python -c "import shutil; print(shutil.which('mf6'), shutil.which('pestpp-ies'))"
+# Both should be inside this environment's bin. If something else on PATH
+# (e.g. ~/bin) shadows them, that is what the notebooks will copy and run.
 #
 # pixi.toml is the other way to do the same thing, and is the recommended one
 # because it also pins the transitive dependency set (pixi.lock). Keep the two
