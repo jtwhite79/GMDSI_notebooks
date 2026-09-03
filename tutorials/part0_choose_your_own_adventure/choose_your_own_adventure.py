@@ -30,7 +30,6 @@ def setup_pst():
     shutil.copytree(org_d,tmp_d)
 
     hbd.prep_bins(tmp_d)
-    hbd.prep_deps(tmp_d)
 
     # load simulation
     sim = flopy.mf6.MFSimulation.load(sim_ws=tmp_d)

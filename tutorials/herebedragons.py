@@ -122,17 +122,6 @@ def prep_forecasts(pst, model_times=False):
         f'these forecasts did not get a "truth" value from pred_data.csv:\n{unset}'
     return
 
-def prep_deps(template_ws, dep_dir=None):
-    # dep_dir=os.path.join('..','..','dependencies')
-    # for org_d in [os.path.join(dep_dir,"flopy"),os.path.join(dep_dir,"pyemu")]:
-    #     #org_d = i.path
-    #     new_d = os.path.join(template_ws, os.path.basename(org_d))
-    #     if os.path.exists(new_d):
-    #         shutil.rmtree(new_d)
-    #     shutil.copytree(org_d, new_d)
-    return
-
-
 # The executables the tutorials actually invoke. Named explicitly rather than
 # discovered by listing a directory: prep_bins() used to copy everything it
 # found next to the vendored binaries, which was fine when that directory held
