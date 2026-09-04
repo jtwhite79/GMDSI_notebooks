@@ -22,30 +22,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: prefix-dev/setup-pixi@v0
         with:
-          environment-file: environment.yml
-          environment-name: gmdsitut
-          create-args: python=3.11
-          cache-downloads: true
-          cache-environment: true
+          cache: true
 
-      - name: Add binaries to PATH
-        shell: bash -l {0}
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          if [ "$RUNNER_OS" == "Windows" ]; then d="win"
-          elif [ "$RUNNER_OS" == "macOS" ]; then d="mac"
-          else d="linux"; fi
-          cp bin_new/$d/* "$HOME/.local/bin/"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Fetch executables
+        # GITHUB_TOKEN: get-modflow and get-pestpp query the GitHub releases
+        # API, which is rate limited to ~60 requests/hour per IP for anonymous
+        # callers. Runners share IPs, so without a token these intermittently
+        # fail with "HTTP Error 403: rate limit exceeded".
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pixi run get-exes
 
       - name: Run part0 notebooks
-        shell: bash -l {0}
         env:
           MPLBACKEND: Agg
-        run: |
-          python autotest/run_notebooks.py part0
+        run: pixi run python autotest/run_notebooks.py part0
 
   # ── Part 1 notebooks (mostly independent, only fosm depends on pilotpoints) ──
   part1:
@@ -59,30 +52,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: prefix-dev/setup-pixi@v0
         with:
-          environment-file: environment.yml
-          environment-name: gmdsitut
-          create-args: python=3.11
-          cache-downloads: true
-          cache-environment: true
+          cache: true
 
-      - name: Add binaries to PATH
-        shell: bash -l {0}
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          if [ "$RUNNER_OS" == "Windows" ]; then d="win"
-          elif [ "$RUNNER_OS" == "macOS" ]; then d="mac"
-          else d="linux"; fi
-          cp bin_new/$d/* "$HOME/.local/bin/"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Fetch executables
+        # GITHUB_TOKEN: get-modflow and get-pestpp query the GitHub releases
+        # API, which is rate limited to ~60 requests/hour per IP for anonymous
+        # callers. Runners share IPs, so without a token these intermittently
+        # fail with "HTTP Error 403: rate limit exceeded".
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pixi run get-exes
 
       - name: Run part1 notebooks
-        shell: bash -l {0}
         env:
           MPLBACKEND: Agg
-        run: |
-          python autotest/run_notebooks.py part1
+        run: pixi run python autotest/run_notebooks.py part1
 
   # ── Part 2 notebooks (run sequentially: setup -> mid -> final) ──
   part2:
@@ -96,27 +82,85 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: prefix-dev/setup-pixi@v0
         with:
-          environment-file: environment.yml
-          environment-name: gmdsitut
-          create-args: python=3.11
-          cache-downloads: true
-          cache-environment: true
+          cache: true
 
-      - name: Add binaries to PATH
-        shell: bash -l {0}
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          if [ "$RUNNER_OS" == "Windows" ]; then d="win"
-          elif [ "$RUNNER_OS" == "macOS" ]; then d="mac"
-          else d="linux"; fi
-          cp bin_new/$d/* "$HOME/.local/bin/"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Fetch executables
+        # GITHUB_TOKEN: get-modflow and get-pestpp query the GitHub releases
+        # API, which is rate limited to ~60 requests/hour per IP for anonymous
+        # callers. Runners share IPs, so without a token these intermittently
+        # fail with "HTTP Error 403: rate limit exceeded".
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pixi run get-exes
 
       - name: Run part2 notebooks
-        shell: bash -l {0}
         env:
           MPLBACKEND: Agg
+        run: pixi run python autotest/run_notebooks.py part2
+
+  # ── The conda/mamba path (environment.yml), which the pixi jobs never touch ──
+  #
+  # environment.yml and pixi.toml are two hand-maintained dependency lists that
+  # have to stay in step, and the two `get-*` commands in the yml header have to
+  # stay in step with pixi.toml's get-exes task. Without this job, drift in
+  # either is invisible until a student hits it.
+  #
+  # Only part0 is run: it is enough to catch dependency drift and to prove the
+  # executables resolve, without paying for the full suite a second time.
+  conda:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    name: conda-part0-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        # required for conda activation to persist between steps
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: gmdsitut
+          miniforge-version: latest
+          use-mamba: true
+
+      - name: Fetch executables
+        # the same pins as pixi.toml's get-exes task
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python autotest/run_notebooks.py part2
+          get-modflow --release-id 29.0 --subset mf6,mp7 :python
+          get-pestpp --release-id 5.2.27 :python
+
+      - name: Check executables resolve inside the environment
+        # A binary found OUTSIDE the env means something earlier on PATH is
+        # shadowing it - and herebedragons.prep_bins copies whatever `which`
+        # finds into every worker directory, so the notebooks would silently
+        # run the wrong version rather than fail.
+        run: |
+          python - <<'PY'
+          import os, shutil, sys
+          exes = ["mf6", "mp7", "pestpp-glm", "pestpp-ies", "pestpp-sen",
+                  "pestpp-opt", "pestpp-da", "pestpp-mou", "pestpp-swp"]
+          prefix = os.path.realpath(sys.prefix)
+          bad = []
+          for name in exes:
+              found = shutil.which(name)
+              print(f"{name:<12}{found}")
+              if found is None or not os.path.realpath(found).startswith(prefix):
+                  bad.append((name, found))
+          if bad:
+              sys.exit("not resolved inside the environment: {}".format(bad))
+          PY
+
+      - name: Run part0 notebooks
+        env:
+          MPLBACKEND: Agg
+        run: python autotest/run_notebooks.py part0

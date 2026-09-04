@@ -1,3 +1,30 @@
+# Conda/mamba alternative to pixi.
+#
+#     mamba env create -f environment.yml
+#     conda activate gmdsitut
+#     get-modflow --release-id 29.0 --subset mf6,mp7 :python
+#     get-pestpp --release-id 5.2.27 :python
+#
+# The two get-* commands are the same ones `pixi run get-exes` runs, with the
+# same pins. ":python" installs into this environment's own bin, so the
+# environment owns its binaries rather than sharing a directory in the repo.
+#
+# The pinned releases:
+#   MODFLOW-ORG/executables 29.0 - MODFLOW 6.7.0 and MODPATH 7.2.001
+#   usgs/pestpp 5.2.27           - the PEST++ suite
+#
+# Pin PEST++ explicitly rather than taking "latest": every usgs/pestpp release
+# since 5.2.16 is flagged a GitHub "prerelease", and the /releases/latest
+# endpoint skips prereleases, so "latest" installs 5.2.16 (December 2024).
+#
+# To check what an activated environment will actually run:
+#     python -c "import shutil; print(shutil.which('mf6'), shutil.which('pestpp-ies'))"
+# Both should be inside this environment's bin. If something else on PATH
+# (e.g. ~/bin) shadows them, that is what the notebooks will copy and run.
+#
+# pixi.toml is the other way to do the same thing, and is the recommended one
+# because it also pins the transitive dependency set (pixi.lock). Keep the two
+# in step: the versions below are the versions pinned in pixi.toml.
 name: gmdsitut
 channels:
   - conda-forge
@@ -6,23 +33,31 @@ dependencies:
   - python=3.11
   - pip
   - pandas>=2.0,<3.0
-  - numpy<2 
-  - matplotlib 
-  - openpyxl
-  - xlrd
-  - jupyter
-  - notebook
+  # pyemu 1.7.0 pins numpy on linux (a blas workaround in its pyproject);
+  # match that here so the environment resolves on every platform.
+  - numpy>=2.2.6,<2.3.2
+  - matplotlib
   - scipy
+  # part0_intro_to_pls checks its from-scratch NIPALS against sklearn
+  - scikit-learn
   - shapely
   - rtree
   - pyproj>=2.0
   - pyshp
   - psutil
-  - git
+  - pillow
+  - openpyxl
+  - xlrd
+  - jupyter
+  - jupyterlab
+  - notebook
   - nbconvert
-  - modflow-devtools
-  - scikit-learn
+  - nbformat
+  - ipywidgets
+  - ipython
+  - git
   - pip:
-       - -e ./dependencies/flopy
-       - -e ./dependencies/pyemu
-       - pypestutils
+      - pyemu==1.7.0
+      - flopy==3.10.0
+      - pypestutils==0.3.0
+      - modflow-devtools

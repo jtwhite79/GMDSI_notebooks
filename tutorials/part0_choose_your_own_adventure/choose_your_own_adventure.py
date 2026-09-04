@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt;
 import psutil
 sys.path.insert(0,"..")
 import herebedragons as hbd               
-# sys.path.insert(0,os.path.join("..","..","dependencies"))                               
 import pyemu
 import flopy
 
@@ -31,7 +30,6 @@ def setup_pst():
     shutil.copytree(org_d,tmp_d)
 
     hbd.prep_bins(tmp_d)
-    hbd.prep_deps(tmp_d)
 
     # load simulation
     sim = flopy.mf6.MFSimulation.load(sim_ws=tmp_d)

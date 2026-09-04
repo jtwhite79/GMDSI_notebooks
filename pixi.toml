@@ -1,0 +1,75 @@
+[workspace]
+name = "gmdsi-notebooks"
+version = "0.1.0"
+channels = ["conda-forge"]
+requires-pixi = ">=0.71"
+# The platform versions matter: pypestutils ships prebuilt wheels tagged
+# macosx_14_0_arm64 / manylinux_2_17. Without these minimums pixi falls back to
+# the sdist, which carries no compiled pestutils library, and the geostatistics
+# notebooks fail at import with "Could not load pestutils library".
+platforms = [
+    "win-64",
+    { platform = "linux-64", linux = "4.4.0" },
+    { platform = "linux-aarch64", linux = "4.4.0" },
+    { platform = "osx-arm64", macos = "14.0" },
+    "osx-64",
+]
+
+[dependencies]
+python = "3.11.*"
+pandas = ">=2.0,<3.0"
+# pyemu 1.7.0 pins numpy on linux (a blas workaround in its pyproject); match
+# that here so one lockfile resolves on every platform.
+numpy = ">=2.2.6,<2.3.2"
+matplotlib = "*"
+scipy = "*"
+# scikit-learn: part0_intro_to_pls checks its from-scratch NIPALS against
+# sklearn.cross_decomposition.PLSRegression, which pyemu.emulators.PLS also wraps.
+scikit-learn = "*"
+shapely = "*"
+rtree = "*"
+pyproj = ">=2.0"
+pyshp = "*"
+psutil = "*"
+pillow = "*"
+openpyxl = "*"
+xlrd = "*"
+jupyter = "*"
+jupyterlab = "*"
+notebook = "*"
+nbconvert = "*"
+nbformat = "*"
+ipywidgets = "*"
+ipython = "*"
+git = "*"
+
+[pypi-dependencies]
+# The two packages this course is actually about, pinned to released versions
+# so a student and CI resolve the same thing.
+pyemu = "==1.7.0"
+flopy = "==3.10.0"
+pypestutils = "==0.3.0"
+modflow-devtools = "*"
+
+[tasks]
+install = { depends-on = ["get-exes"] }
+# Install the executables into this environment's own bin (":python"). These
+# are the statically linked USGS release builds: herebedragons.prep_bins copies
+# them into every template and worker directory, which conda-packaged binaries
+# cannot survive (they resolve their libs through @rpath back into the env).
+#
+# Both releases are pinned so a student running this in six months gets the same
+# binaries we tested against. MODFLOW-ORG/executables 29.0 is MODFLOW 6.7.0 and
+# MODPATH 7.2.001.
+#
+# The PEST++ pin is not merely for reproducibility: every usgs/pestpp release
+# since 5.2.16 is flagged a GitHub "prerelease", and the /releases/latest
+# endpoint skips prereleases - so "latest" would quietly install 5.2.16 from
+# December 2024 rather than the newest build.
+get-exes = """
+get-modflow --release-id 29.0 --subset mf6,mp7 :python &&
+get-pestpp --release-id 5.2.27 :python
+"""
+check-exes = "python -c \"import shutil;[print(f'{n:<12}{shutil.which(n)}') for n in ['mf6','mp7','pestpp-glm','pestpp-ies','pestpp-sen','pestpp-opt','pestpp-da','pestpp-mou','pestpp-swp']]\""
+jupyter = "jupyter lab"
+test-notebooks = "python autotest/run_notebooks.py"

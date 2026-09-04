@@ -4,11 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import sys
-# sys.path.insert(0,os.path.join("..", "..", "dependencies"))
 import pyemu
 import flopy
-assert "dependencies" in flopy.__file__
-assert "dependencies" in pyemu.__file__
 sys.path.insert(0,"..")
 import herebedragons as hbd
 import flopy.plot.styles as wtf
@@ -146,8 +143,12 @@ def plot_ies_and_resp_par_forecast_results(resp_d,ies_d,pst,title=None,fig_name=
         pe = pd.read_csv(fname,index_col=0)    
         pes.append(pe)
     for real in pes[-1].index:
-        xvals  = [pe.loc[real,"hk1"] for pe in pes]
-        yvals  = [pe.loc[real,"rch0"] for pe in pes]
+        # A realization can be dropped as bad and then restored by a covariance
+        # re-inflation cycle, so it is not necessarily present in every
+        # iteration. Trace it only across the iterations it appears in.
+        present = [pe for pe in pes if real in pe.index]
+        xvals  = [pe.loc[real,"hk1"] for pe in present]
+        yvals  = [pe.loc[real,"rch0"] for pe in present]
         ax.plot(xvals,yvals,marker=".",c="w",lw=0.5,markersize=3)
     xvals = pes[-1].loc[:,"hk1"].values
     yvals = pes[-1].loc[:,"rch0"].values
