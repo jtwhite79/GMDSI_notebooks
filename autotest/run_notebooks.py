@@ -34,6 +34,18 @@ TUTORIALS = Path(__file__).resolve().parent.parent / "tutorials"
 # particular) can exceed 30 minutes on a laptop; override with NB_TIMEOUT.
 TIMEOUT = int(os.environ.get("NB_TIMEOUT", 1800))
 
+# Cap on PANTHER agents during CI. The notebooks ask for 10-20, sized for a
+# workstation; a GitHub runner has 2-4 vCPUs. Oversubscribing them makes model
+# runs fail sporadically, and PESTPP-OPT cannot tolerate even one lost run - its
+# sequential LP needs a complete response matrix (freyberg_opt_2 has failed on
+# windows-latest for exactly this reason).
+#
+# Windows is capped hardest: it is where the failures show up, with per-file
+# locking and antivirus scanning every model output. Override with NB_WORKER_CAP;
+# set it to 0 to disable capping entirely.
+_DEFAULT_CAP = 4 if sys.platform.startswith("win") else 6
+WORKER_CAP = int(os.environ.get("NB_WORKER_CAP", _DEFAULT_CAP))
+
 # Sections and individual notebooks to skip during testing.
 SKIP_SECTIONS = {
     "part2_07_da",
@@ -314,6 +326,46 @@ def patch_overdue_giveup_fac(nb_path):
     return changed
 
 
+def cap_num_workers(nb_path, cap):
+    """Cap the PANTHER agent count in a notebook.
+
+    The notebooks ask for 10-20 agents, which is right on a workstation and far
+    too many on a CI runner. A GitHub windows-latest box has 4 vCPUs, so 15
+    agents is ~4 per core, all of them writing model output into their own
+    directory while Defender scans it. Runs then fail sporadically - and
+    PESTPP-OPT cannot absorb that the way PESTPP-IES can, because its sequential
+    LP needs a complete response matrix, so one lost run aborts the notebook.
+
+    Rewrites `num_workers = N` where N exceeds the cap. Expressions such as
+    `num_workers = psutil.cpu_count(logical=False)` are left alone - they
+    already scale to the machine.
+    """
+    import json
+    import re
+
+    with open(nb_path, "r", encoding="utf-8") as f:
+        nb = json.load(f)
+    pattern = re.compile(r'^(\s*num_workers\s*=\s*)(\d+)(.*)$')
+    changed = False
+    for cell in nb["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        new_source = []
+        for line in cell["source"]:
+            m = pattern.match(line)
+            if m and int(m.group(2)) > cap:
+                new_source.append(f"{m.group(1)}{cap}{m.group(3)}\n".rstrip("\n") + "\n")
+                changed = True
+            else:
+                new_source.append(line)
+        cell["source"] = new_source
+    if changed:
+        with open(nb_path, "w", encoding="utf-8") as f:
+            json.dump(nb, f, indent=1)
+        print(f"  Capped num_workers at {cap} in {nb_path.name}")
+    return changed
+
+
 def run_notebook(nb_path, keep_output=False):
     """Execute a notebook in place. Returns True on success.
 
@@ -341,6 +393,8 @@ def run_notebook(nb_path, keep_output=False):
         if nb_path.name == "freyberg_glm_2.ipynb":
             patch_noptmax(nb_path, 1)
         patch_overdue_giveup_fac(nb_path)
+        if WORKER_CAP:
+            cap_num_workers(nb_path, WORKER_CAP)
 
     env = os.environ.copy()
     if keep_output:
