@@ -58,6 +58,7 @@ SKIP_NOTEBOOKS = {
     "simple_bayes_demo.ipynb",
     "intro_to_bayes.ipynb",
     "intro_to_regression.ipynb",
+    "intro_to_regression_ensemble.ipynb",
     # ies notebooks incompatible with reduced noptmax
     "freyberg_ies_2_localization.ipynb",
     "freyberg_ies_3_restarting.ipynb",
