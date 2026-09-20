@@ -35,8 +35,12 @@ for d in dirs:
         os.system("jupyter nbconvert --to markdown {0}".format(nb_file))
         # set new name
         md_file = os.path.basename(nb_file).replace('.ipynb', '.md')
-        # set the path to md file
-        md_dir = os.path.join(docs_dir, d.split("_")[0])
+        # set the path to md file. the part0 sections were once named intro_*
+        # and the docs folder (and notebook_order.csv) still call them "intro"
+        docs_folder = d.split("_")[0]
+        if docs_folder == "part0":
+            docs_folder = "intro"
+        md_dir = os.path.join(docs_dir, docs_folder)
         if not os.path.exists(md_dir):
             os.makedirs(md_dir)
         # move new file to docs folder
